@@ -1,0 +1,5 @@
+{
+  "buildCommand": "cd admin-panel && npm install && npm run build",
+  "outputDirectory": "admin-panel/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
