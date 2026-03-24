@@ -90,6 +90,7 @@ class InfoExtractionResponse(BaseModel):
     missing_fields: List[str]
     extracted_info: dict
     follow_up_questions: List[str]
+    completeness_score: float = 0.5
 
 
 # Health check

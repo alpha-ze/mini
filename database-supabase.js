@@ -1,14 +1,16 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
     console.error('Missing Supabase credentials in .env file');
     process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false }
+});
 
 class SupabaseDatabase {
     constructor() {
@@ -25,7 +27,10 @@ class SupabaseDatabase {
                 user_id: data.userId,
                 status: 'Submitted',
                 image_url: null,
-                video_url: null
+                video_url: null,
+                user_name: data.userName || null,
+                user_role: data.userRole || null,
+                user_department: data.userDept || null,
             };
 
             // Parse media URLs if present
@@ -180,6 +185,22 @@ class SupabaseDatabase {
             }));
         } catch (error) {
             console.error('Error getting recent grievances:', error);
+            return [];
+        }
+    }
+
+    async getGrievanceActions(grievanceUUID) {
+        try {
+            const { data, error } = await supabase
+                .from('grievance_actions')
+                .select('remarks, new_status, admin_name, created_at')
+                .eq('grievance_id', grievanceUUID)
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error('Error getting grievance actions:', error);
             return [];
         }
     }

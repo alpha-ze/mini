@@ -8,6 +8,7 @@ import GrievanceDetail from './pages/GrievanceDetail'
 import Search from './pages/Search'
 import Reports from './pages/Reports'
 import Layout from './components/Layout'
+import { ThemeProvider } from './context/ThemeContext'
 
 function App() {
   const [session, setSession] = useState<any>(null)
@@ -37,21 +38,23 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
-        <Route
-          path="/"
-          element={session ? <Layout /> : <Navigate to="/login" />}
-        >
-          <Route index element={<Dashboard />} />
-          <Route path="grievances" element={<GrievanceList />} />
-          <Route path="grievances/:id" element={<GrievanceDetail />} />
-          <Route path="search" element={<Search />} />
-          <Route path="reports" element={<Reports />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
+          <Route
+            path="/"
+            element={session ? <Layout /> : <Navigate to="/login" />}
+          >
+            <Route index element={<Dashboard />} />
+            <Route path="grievances" element={<GrievanceList />} />
+            <Route path="grievances/:id" element={<GrievanceDetail />} />
+            <Route path="search" element={<Search />} />
+            <Route path="reports" element={<Reports />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   )
 }
 

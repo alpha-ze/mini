@@ -1,177 +1,114 @@
 """
-AI-Powered Information Extraction
-Uses LLM to extract structured data and identify missing fields
+AI-Powered Information Extraction using Google Gemini
 """
 
 import os
 import json
-from typing import Dict, List
-from openai import OpenAI
-from anthropic import Anthropic
+import re
+from typing import Dict
+import google.generativeai as genai
 
 
 class AIInformationExtractor:
-    """
-    Extracts information and generates follow-up questions using AI
-    """
     
-    def __init__(self, provider: str = "openai"):
-        """Initialize AI extractor"""
-        self.provider = provider
+    def __init__(self, provider: str = "gemini"):
         self.model_loaded = False
-        
         try:
-            if provider == "openai":
-                api_key = os.getenv("OPENAI_API_KEY")
-                if not api_key:
-                    raise ValueError("OPENAI_API_KEY not found")
-                self.client = OpenAI(api_key=api_key)
-                self.model = "gpt-4-turbo-preview"
-                
-            elif provider == "anthropic":
-                api_key = os.getenv("ANTHROPIC_API_KEY")
-                if not api_key:
-                    raise ValueError("ANTHROPIC_API_KEY not found")
-                self.client = Anthropic(api_key=api_key)
-                self.model = "claude-3-sonnet-20240229"
-            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY not set")
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel("gemini-2.0-flash")
+            self.fallback_model = genai.GenerativeModel("gemini-2.0-flash-lite")
             self.model_loaded = True
-            print(f"✅ AI Info Extractor initialized with {provider}")
-            
+            print("✅ Gemini info extractor ready (gemini-2.0-flash + 1.5-flash-8b fallback)")
         except Exception as e:
-            print(f"⚠️ AI Info Extractor failed: {e}")
-            self.model_loaded = False
-    
-    
+            print(f"⚠️ Gemini init failed: {e} — using regex fallback")
+
     def is_loaded(self) -> bool:
         return self.model_loaded
-    
-    
+
     def extract(self, text: str) -> Dict:
-        """
-        Extract information and identify missing fields
-        """
-        
-        if not self.model_loaded:
-            return self._basic_extraction(text)
-        
-        try:
-            if self.provider == "openai":
-                return self._extract_with_openai(text)
-            else:
-                return self._extract_with_anthropic(text)
-                
-        except Exception as e:
-            print(f"⚠️ AI extraction failed: {e}")
-            return self._basic_extraction(text)
-    
-    
-    def _extract_with_openai(self, text: str) -> Dict:
-        """Extract using OpenAI"""
-        
-        system_prompt = """You are an expert at extracting structured information from complaints.
+        if self.model_loaded:
+            try:
+                return self._extract_with_gemini(text)
+            except Exception as e:
+                print(f"⚠️ Gemini extraction failed: {e}")
+        return self._basic_extraction(text)
 
-Analyze the complaint and extract:
-1. Location (room number, building, area)
-2. Urgency level (urgent/high/medium/low)
-3. Category/Type of issue
-4. Specific details
+    def _extract_with_gemini(self, text: str) -> Dict:
+        prompt = f"""You are analyzing a grievance/complaint submitted via WhatsApp at a university.
 
-Identify what information is MISSING that would help resolve the complaint.
+Complaint: "{text}"
 
-Respond with JSON only:
-{
-    "extracted_info": {
-        "location": "Room 301, Block A",
-        "urgency": "high",
-        "category": "Maintenance",
-        "details": "AC not cooling properly"
-    },
-    "missing_fields": ["contact_person", "time_of_occurrence"],
-    "follow_up_questions": [
-        "When did you first notice this issue?",
-        "Have you reported this before?"
-    ],
-    "completeness_score": 0.7
-}"""
+Identify what key information is MISSING that would help resolve this complaint faster.
+Think about: location (room/building/area), time of occurrence, specific device or item affected, contact details, urgency level, previous attempts to resolve.
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Complaint: {text}"}
-            ],
-            temperature=0.3,
-            response_format={"type": "json_object"}
-        )
-        
-        result = json.loads(response.choices[0].message.content)
-        
-        return {
-            "missing_fields": result.get("missing_fields", []),
-            "extracted_info": result.get("extracted_info", {}),
-            "follow_up_questions": result.get("follow_up_questions", []),
-            "completeness_score": result.get("completeness_score", 0.5)
-        }
-    
-    
-    def _extract_with_anthropic(self, text: str) -> Dict:
-        """Extract using Anthropic"""
-        
-        prompt = f"""Analyze this complaint and extract structured information.
+Respond with ONLY valid JSON, no markdown:
+{{
+  "extracted_info": {{
+    "location": "extracted or null",
+    "urgency": "high/medium/low",
+    "category": "brief category",
+    "details": "key details found"
+  }},
+  "missing_fields": ["field1", "field2"],
+  "follow_up_questions": ["Question 1?", "Question 2?"],
+  "completeness_score": 0.0
+}}
 
-Complaint: {text}
+Rules:
+- follow_up_questions: max 3, short and specific, only ask what's truly missing
+- completeness_score: 0.0 (very incomplete) to 1.0 (fully detailed)
+- If the complaint is already detailed enough, return empty arrays and score >= 0.8"""
 
-Extract: location, urgency, category, details
-Identify: missing information
-Generate: follow-up questions
+        # Try primary model, fall back to lighter model on quota errors
+        for model in [self.model, getattr(self, 'fallback_model', None)]:
+            if model is None:
+                break
+            try:
+                response = model.generate_content(prompt)
+                raw = response.text.strip()
+                raw = re.sub(r'^```(?:json)?\s*', '', raw)
+                raw = re.sub(r'\s*```$', '', raw)
+                result = json.loads(raw)
+                return {
+                    "missing_fields": result.get("missing_fields", []),
+                    "extracted_info": result.get("extracted_info", {}),
+                    "follow_up_questions": result.get("follow_up_questions", []),
+                    "completeness_score": float(result.get("completeness_score", 0.5))
+                }
+            except Exception as e:
+                if '429' in str(e) or 'quota' in str(e).lower() or 'RESOURCE_EXHAUSTED' in str(e):
+                    print(f"⚠️ Quota hit on {model.model_name}, trying fallback...")
+                    continue
+                raise e
+        raise Exception("All Gemini models exhausted")
 
-Respond with JSON only."""
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=1024,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        result = json.loads(response.content[0].text)
-        
-        return {
-            "missing_fields": result.get("missing_fields", []),
-            "extracted_info": result.get("extracted_info", {}),
-            "follow_up_questions": result.get("follow_up_questions", [])
-        }
-    
-    
     def _basic_extraction(self, text: str) -> Dict:
-        """Basic fallback extraction"""
-        import re
-        
-        extracted = {}
         missing = []
-        
-        # Try to extract location
-        location_match = re.search(r'room\s+(\d+)|block\s+([A-Z])', text, re.IGNORECASE)
-        if location_match:
-            extracted['location'] = location_match.group(0)
+        extracted = {}
+
+        if re.search(r'room\s*\d+|block\s*[A-Z]|floor\s*\d+|hostel|lab\s*\d+', text, re.IGNORECASE):
+            extracted['location'] = re.search(r'room\s*\d+|block\s*[A-Z]|floor\s*\d+|hostel|lab\s*\d+', text, re.IGNORECASE).group(0)
         else:
             missing.append('location')
-        
-        # Check urgency keywords
-        if any(word in text.lower() for word in ['urgent', 'emergency', 'immediately']):
+
+        if any(w in text.lower() for w in ['urgent', 'emergency', 'immediately', 'asap']):
             extracted['urgency'] = 'high'
         else:
             missing.append('urgency')
-        
+
         questions = []
         if 'location' in missing:
-            questions.append("Where exactly is this issue located?")
+            questions.append("Where exactly is this issue located? (e.g. room number, building, area)")
         if 'urgency' in missing:
-            questions.append("How urgent is this issue?")
-        
+            questions.append("How urgent is this? Is it affecting your daily activities?")
+
+        score = 1.0 - (len(missing) * 0.3)
         return {
             "missing_fields": missing,
             "extracted_info": extracted,
-            "follow_up_questions": questions
+            "follow_up_questions": questions,
+            "completeness_score": max(0.1, min(1.0, score))
         }
